@@ -1,0 +1,166 @@
+<?php
+/**
+ * @file
+ * Main codes for search_drupal_problem.
+ *
+ * Currently supported source is drupal.org projects issue queue,
+ * more could be added, presumably by adding a plugin system.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function search_drupal_problem_menu() {
+  $paths['search-drupal-problem'] = array(
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('search_drupal_problem_form_view'),
+    'file' => 'search_drupal_problem_form.inc',
+    'access callback' => TRUE,
+  );
+
+  return $paths;
+}
+
+/**
+ * The heart of this module, run on form submit.
+ */
+function _search_drupal_problem_execute($search_term, $project) {
+  // The return value.
+  $prefix = '<ul><li>';
+  $content = '';
+  $suffix = '</li></ul>';
+
+  // Run a query to search for an issue given the query and contributed
+  // module name (in reverse order) on drupal.org
+  // additional parameter removed: &categories=bug&version=All
+  $search_term = explode(' ', drupal_strtolower($search_term));
+  $url_encoded_search_term = implode('+', $search_term);
+  if (empty($project)) {
+    $project_fragment = '';
+  }
+  else {
+    $project_fragment = '&projects=' . $project;
+  }
+  $fullurl = 'http://drupal.org/project/issues?text=' . $url_encoded_search_term . $project_fragment . '&status=All';
+
+  $content .= '<h2><a href="' . $fullurl . '">Drupal issue queue</a></h2>';
+
+  // Implicit curl fetch on the $fullurl.
+  $htmlsource = @file_get_contents($fullurl);
+  if ($htmlsource === FALSE) {
+    drupal_set_message(t('Unable to fetch the content of @url', array('@url' => $fullurl)), 'error');
+    return $prefix . $content . $suffix;
+  }
+
+  // HTML5 parser, we can't just use the DOMDocument.
+  require_once 'HTML5/Parser.php';
+  $html5lib = HTML5_Parser::parse($htmlsource);
+  $xhtml = $html5lib->saveXml();
+
+  $dom = new DOMDocument();
+  if (!$dom->loadHTML($xhtml)) {
+    drupal_set_message(t('Unable to parse html from @url', array('@url' => $fullurl)), 'error');
+    return $prefix . $content . $suffix;
+  }
+
+  // Get the result's html table element.
+  $xpath = new DOMXPath($dom);
+  $elems = $xpath->query('//table[contains(concat(" ", normalize-space(@class), " "), " project-issue ")]/tbody/tr');
+
+  if (!is_null($elems)) {
+    $content .= '<ul>';
+    foreach ($elems as $elem) {
+      $nodes = $elem->childNodes;
+      $content .= '<li><p>';
+      if (empty($project)) {
+        $content .= '<strong>Project: </strong>' . $dom->saveHTML($nodes->item(0)) . '<br>';
+      }
+      $content .= '<strong>Title: </strong>' . $dom->saveHTML($nodes->item(2)) . '<br>';
+      // Gets the href attribute of a <a> child element, damn you complicated OOP!
+      // I assumes there will always be an <a>, may need to check otherwise?
+      $url = 'http://drupal.org' . $nodes->item(2)->getElementsByTagName('a')->item(0)->getAttribute('href');
+
+      $content .= '<strong>Status: </strong>' . check_plain($nodes->item(4)->nodeValue) . ', ' . check_plain($nodes->item(8)->nodeValue) . '<br>';
+      // There used to be version information here, RIP.
+
+      $content .= '<strong>Comment: </strong>';
+      $content .= (empty($nodes->item(10)->nodeValue)) ? '0' : check_plain($nodes->item(10)->nodeValue);
+      $content .= ', last comment ' . check_plain($nodes->item(12)->nodeValue) . '<br>';
+
+      $content .= '</p>';
+
+      $content .= _search_drupal_problem_print_d_o_issue($url, $search_term);
+      $content .= '</li>';
+    }
+    $content .= '</ul>';
+  }
+
+  return $prefix . $content . $suffix;
+}
+
+/**
+ * Fetch relevant drupal issue page.
+ * Looks for which comments in drupal issue queue that has our query in them.
+ */
+function _search_drupal_problem_print_d_o_issue($url, $search_term) {
+  $prefix = '';
+  $content = '';
+  $suffix = '';
+
+  // Implicit curl fetch on the $fullurl.
+  $htmlsource = @file_get_contents($url);
+  if ($htmlsource === FALSE) {
+    drupal_set_message(t('Unable to fetch the content of @url', array('@url' => $url)), 'error');
+    return $prefix . $content . $suffix;
+  }
+
+  // HTML5 parser, we can't just use the DOMDocument.
+  require_once 'HTML5/Parser.php';
+  $html5lib = HTML5_Parser::parse($htmlsource);
+  $xhtml = $html5lib->saveXml();
+
+  $dom = new DOMDocument();
+  if (!$dom->loadHTML($xhtml)) {
+    drupal_set_message(t('Unable to parse html from @url', array('@url' => $url)), 'error');
+    return $prefix . $content . $suffix;
+  }
+
+  // Get the result's html table element.
+  $xpath = new DOMXPath($dom);
+  $elems = $xpath->query('//div[contains(concat(" ", normalize-space(@class), " "), " project-issue ")]');
+  if ($elems->length) {
+    $node = $elems->item(0);
+
+    $del = $dom->getElementById('project-summary-container');
+    $node->removeChild($del);
+    $content .= $dom->saveHTML($node);
+
+    $comments = '';
+    $elems = $xpath->query('//div[@id="comments"]//div[@class="comment-inner"]');
+    foreach ($elems as $elem) {
+      $dels = $xpath->query('.//ul[@class="links"]', $elem);
+      if ($dels->length) {
+        $del = $dels->item(0);
+        $del->parentNode->removeChild($del);
+      }
+
+      $c = $dom->saveHTML($elem);
+      $c_strip = drupal_strtolower(strip_tags($c));
+      $b = FALSE;
+      foreach ($search_term as &$search) {
+        $b = strpos($c_strip, $search) !== FALSE;
+        if ($b) {
+          break;
+        }
+      }
+      if ($b) {
+        $comments .= '<li>' . $c . '</li>';
+      }
+    }
+    if (!empty($comments)) {
+      $content .= '<h2>Related Comments</h2><ol> ' . $comments . '</ol>';
+    }
+  }
+
+  return $prefix . $content . $suffix;
+}
