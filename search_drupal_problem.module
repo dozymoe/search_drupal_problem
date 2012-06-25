@@ -35,6 +35,10 @@ function _search_drupal_problem_execute($search_term, $project) {
   // additional parameter removed: &categories=bug&version=All
   $search_term = explode(' ', drupal_strtolower($search_term));
   $url_encoded_search_term = implode('+', $search_term);
+  // Seems like the advance issues page use a user friendly name, rather than
+  // the project url path (eg. Display Suite instead of ds).
+  $project = explode(' ', drupal_strtolower($project));
+  $project = implode('+', $project);
   if (empty($project)) {
     $project_fragment = '';
   }
