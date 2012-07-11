@@ -11,11 +11,17 @@
  * Implements hook_menu().
  */
 function search_drupal_problem_menu() {
-  $paths['search-drupal-problem'] = array(
-    'page callback' => 'drupal_get_form',
-    'page arguments' => array('search_drupal_problem_form_view'),
-    'file' => 'search_drupal_problem_form.inc',
-    'access callback' => TRUE,
+  $paths = array(
+    'search-drupal-problem' => array(
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('search_drupal_problem_form_view'),
+      'file' => 'search_drupal_problem_form.inc',
+      'access callback' => TRUE,
+    ),
+    'drupal-issue-scraper' => array(
+      'page callback' => '_search_drupal_problem_drupal_issue_scrapper',
+      'access callback' => TRUE,
+    ),
   );
 
   return $paths;
@@ -25,6 +31,8 @@ function search_drupal_problem_menu() {
  * The heart of this module, run on form submit.
  */
 function _search_drupal_problem_execute($search_term, $project) {
+  drupal_add_library('system', 'drupal.ajax');
+
   // The return value.
   $prefix = '<ul><li>';
   $content = '';
@@ -71,7 +79,15 @@ function _search_drupal_problem_execute($search_term, $project) {
   $xpath = new DOMXPath($dom);
   $elems = $xpath->query('//table[contains(concat(" ", normalize-space(@class), " "), " project-issue ")]/tbody/tr');
 
+  $ajax_args = array(
+    'search_term' => $search_term,
+  );
+  $unique_id = 1;
+
   if (!is_null($elems)) {
+    // List of ajax callback to try to fetch issue details by ajax on document.ready().
+    $ajax_issue_list = array();
+
     $content .= '<ul>';
     foreach ($elems as $elem) {
       $nodes = $elem->childNodes;
@@ -84,6 +100,10 @@ function _search_drupal_problem_execute($search_term, $project) {
       // I assumes there will always be an <a>, may need to check otherwise?
       $url = 'http://drupal.org' . $nodes->item(2)->getElementsByTagName('a')->item(0)->getAttribute('href');
 
+      $ajax_args['url'] = $url;
+      $ajax_args['container'] = 'item' . $unique_id;
+      $unique_id += 1;
+
       $content .= '<strong>Status: </strong>' . check_plain($nodes->item(4)->nodeValue) . ', ' . check_plain($nodes->item(8)->nodeValue) . '<br>';
       // There used to be version information here, RIP.
 
@@ -93,10 +113,22 @@ function _search_drupal_problem_execute($search_term, $project) {
 
       $content .= '</p>';
 
-      $content .= _search_drupal_problem_print_d_o_issue($url, $search_term);
+      $ajax_callback_url = '/drupal-issue-scraper/nojs/' . rtrim(strtr(base64_encode(serialize($ajax_args)), '+/', '-_'), '=');
+      $ajax_issue_list[] = str_replace('nojs', 'ajax', $ajax_callback_url);
+      $content .= '<a id="' . $ajax_args['container'] . '" class="use-ajax" href="' . $ajax_callback_url . '">Read more.</a>';
       $content .= '</li>';
     }
     $content .= '</ul>';
+
+    drupal_add_js(array('search_drupal_problem' => array('issue_list' => $ajax_issue_list)), 'setting');
+    $js = <<<EOT
+jQuery('document').ready(function($){
+  for (var i in Drupal.ajax) {
+    $(Drupal.ajax[i].element).trigger('click');
+  }
+});
+EOT;
+    drupal_add_js($js, array('type' => 'inline', 'scope' => 'footer'));
   }
 
   return $prefix . $content . $suffix;
@@ -106,10 +138,20 @@ function _search_drupal_problem_execute($search_term, $project) {
  * Fetch relevant drupal issue page.
  * Looks for which comments in drupal issue queue that has our query in them.
  */
-function _search_drupal_problem_print_d_o_issue($url, $search_term) {
-  $prefix = '';
+function _search_drupal_problem_drupal_issue_scrapper($ajax = 'ajax', $encoded_args = NULL) {
+  if (is_null($encoded_args)) {
+    return '';
+  }
+
+  $args = unserialize(base64_decode(str_pad(strtr($encoded_args, '-_', '+/'), strlen($encoded_args) % 4, '=', STR_PAD_RIGHT)));
+  $url = $args['url'];
+  $search_term = $args['search_term'];
+  $container = $args['container'];
+
+
+  $prefix = '<details><summary>Read more.</summary>';
   $content = '';
-  $suffix = '';
+  $suffix = '</details>';
 
   // Implicit curl fetch on the $fullurl.
   $htmlsource = @file_get_contents($url);
@@ -166,5 +208,17 @@ function _search_drupal_problem_print_d_o_issue($url, $search_term) {
     }
   }
 
-  return $prefix . $content . $suffix;
+  if ($ajax == 'ajax') {
+    $commands = array();
+    $commands[] = ajax_command_replace('#' . $container, $prefix . $content . $suffix);
+
+    $page = array(
+      '#type' => 'ajax',
+      '#commands' => $commands,
+    );
+    ajax_deliver($page);
+  }
+  else {
+    return $prefix . $content . $suffix;
+  }
 }
