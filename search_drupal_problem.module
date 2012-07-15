@@ -17,10 +17,12 @@ function search_drupal_problem_menu() {
       'page arguments' => array('search_drupal_problem_form_view'),
       'file' => 'search_drupal_problem_form.inc',
       'access callback' => TRUE,
+      'type' => MENU_NORMAL_ITEM,
     ),
     'drupal-issue-scraper' => array(
       'page callback' => '_search_drupal_problem_drupal_issue_scrapper',
       'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
     ),
   );
 
@@ -119,16 +121,6 @@ function _search_drupal_problem_execute($search_term, $project) {
       $content .= '</li>';
     }
     $content .= '</ul>';
-
-    drupal_add_js(array('search_drupal_problem' => array('issue_list' => $ajax_issue_list)), 'setting');
-    $js = <<<EOT
-jQuery('document').ready(function($){
-  for (var i in Drupal.ajax) {
-    $(Drupal.ajax[i].element).trigger('click');
-  }
-});
-EOT;
-    drupal_add_js($js, array('type' => 'inline', 'scope' => 'footer'));
   }
 
   return $prefix . $content . $suffix;
