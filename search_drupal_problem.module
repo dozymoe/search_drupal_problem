@@ -30,6 +30,14 @@ function search_drupal_problem_menu() {
 }
 
 /**
+ * Replace all occurences of relative url in contents fetched from drupal.org.
+ * @param type $content 
+ */
+function _restore_d_o_url($content) {
+  return preg_replace('/<a href="\/([^\/])/i', '<a href="http://drupal.org/${1}', $content);
+}
+
+/**
  * The heart of this module, run on form submit.
  */
 function _search_drupal_problem_execute($search_term, $project) {
@@ -65,6 +73,7 @@ function _search_drupal_problem_execute($search_term, $project) {
     drupal_set_message(t('Unable to fetch the content of @url', array('@url' => $fullurl)), 'error');
     return $prefix . $content . $suffix;
   }
+  $htmlsource = _restore_d_o_url($htmlsource);
 
   // HTML5 parser, we can't just use the DOMDocument.
   require_once 'HTML5/Parser.php';
@@ -95,12 +104,12 @@ function _search_drupal_problem_execute($search_term, $project) {
       $nodes = $elem->childNodes;
       $content .= '<li><p>';
       if (empty($project)) {
-        $content .= '<strong>Project: </strong>' . $dom->saveHTML($nodes->item(0)) . '<br>';
+        $content .= '<strong>Project: </strong>' . $dom->saveHTML($nodes->item(0)->getElementsByTagName('a')->item(0)) . '<br>';
       }
-      $content .= '<strong>Title: </strong>' . $dom->saveHTML($nodes->item(2)) . '<br>';
+      $content .= '<strong>Title: </strong>' . $dom->saveHTML($nodes->item(2)->getElementsByTagName('a')->item(0)) . '<br>';
       // Gets the href attribute of a <a> child element, damn you complicated OOP!
       // I assumes there will always be an <a>, may need to check otherwise?
-      $url = 'http://drupal.org' . $nodes->item(2)->getElementsByTagName('a')->item(0)->getAttribute('href');
+      $url = $nodes->item(2)->getElementsByTagName('a')->item(0)->getAttribute('href');
 
       $ajax_args['url'] = $url;
       $ajax_args['container'] = 'item' . $unique_id;
@@ -151,6 +160,7 @@ function _search_drupal_problem_drupal_issue_scrapper($ajax = 'ajax', $encoded_a
     drupal_set_message(t('Unable to fetch the content of @url', array('@url' => $url)), 'error');
     return $prefix . $content . $suffix;
   }
+  $htmlsource = _restore_d_o_url($htmlsource);
 
   // HTML5 parser, we can't just use the DOMDocument.
   require_once 'HTML5/Parser.php';
@@ -171,7 +181,7 @@ function _search_drupal_problem_drupal_issue_scrapper($ajax = 'ajax', $encoded_a
 
     $del = $dom->getElementById('project-summary-container');
     $node->removeChild($del);
-    $content .= $dom->saveHTML($node);
+    $content .= _restore_d_o_url($dom->saveHTML($node));
 
     $comments = '';
     $elems = $xpath->query('//div[@id="comments"]//div[@class="comment-inner"]');
@@ -192,7 +202,7 @@ function _search_drupal_problem_drupal_issue_scrapper($ajax = 'ajax', $encoded_a
         }
       }
       if ($b) {
-        $comments .= '<li>' . $c . '</li>';
+        $comments .= '<li>' . _restore_d_o_url($c) . '</li>';
       }
     }
     if (!empty($comments)) {
